@@ -1,8 +1,6 @@
 # STM32CubeIDE / Eclipse
 .settings/
 .metadata/
-.cproject
-.project
 
 # Build output directories
 Debug/
