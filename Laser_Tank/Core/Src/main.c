@@ -24,21 +24,26 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+#define __HAL_TIM_GET_PRESCALER(__HANDLE__)       ((__HANDLE__)->Instance->PSC)
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+typedef int Bool;
+#define TRUE 1
+#define FALSE 0
+#define DIV	60
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -63,7 +68,23 @@ SDRAM_HandleTypeDef hsdram1;
 
 osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
+Bool pwmReady=FALSE;
+uint32_t pwmCNT=0;
 
+int flag = 0;
+uint32_t v1 = 0;
+uint32_t v2 = 0;
+static int rmcNumber= 0;
+
+// FreeRTOS �??�� �??��
+TaskHandle_t xRemoteRxTaskHandle = NULL;
+// ?��?�� ?��비�?? ISR?��?�� RxTask�? ?��?��?���? ?��?�� ?��
+QueueHandle_t xRemoteRxQueue = NULL;
+// ?��코딩?�� 코드�? RxTask?��?�� ParserTask�? ?��?��?���? ?��?�� ?��
+QueueHandle_t xRemoteParserQueue = NULL;
+
+static uint32_t ulLastCaptureValue = 0;
+static const uint32_t ulMaxPulseWidth_us = 3000; // ?��?�� 종료�? 감�??���? ?��?�� 최�? ?��?�� ?���?
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -83,6 +104,7 @@ static void MX_TIM4_Init(void);
 void StartDefaultTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
+static int getSigBitNumber(int usec);
 void USER_THREADS( void );
 void freertos_IntroTitle(void);
 
@@ -143,10 +165,12 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2);
+
   /* display a freeRTOS Intro */
   freertos_IntroTitle();
 
-  // 즉시 printf �? ?��?��?��?�� ?��?���? stdout buffer size�? 0?���? 만들?���??��.
+  // 즉시 printf �??? ?��?��?��?�� ?��?���??? stdout buffer size�??? 0?���??? 만들?���????��.
   //setvbuf(stdout, NULL, _IONBF, 0);
   printf("[TASK]main\n");
   fflush(stdout);
@@ -219,9 +243,9 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 72;
+  RCC_OscInitStruct.PLL.PLLN = 168;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 3;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -232,7 +256,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV2;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
@@ -624,11 +648,11 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 0;
+  htim4.Init.Prescaler = 83;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim4.Init.Period = 65535;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_IC_Init(&htim4) != HAL_OK)
   {
     Error_Handler();
@@ -833,6 +857,169 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+	// TIM4, 채널 2?��?�� ?��?��?��?���? 발생?��?���? ?��?��
+	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)
+	{
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		uint32_t ulCurrentCaptureValue;
+		uint32_t ulPulseDuration;
+
+		// ?��?�� 캡처 값을 ?��?��?��?��?��.
+		ulCurrentCaptureValue = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+
+		// ?��?�� �??�� ?��간을 계산?��?��?��. ???���? ?��버플로우�? 처리?��?��?��.
+		if (ulCurrentCaptureValue >= ulLastCaptureValue) {
+			ulPulseDuration = ulCurrentCaptureValue - ulLastCaptureValue;
+		} else {
+			ulPulseDuration = (__HAL_TIM_GET_AUTORELOAD(htim) - ulLastCaptureValue) + ulCurrentCaptureValue;
+		}
+
+		// ?��?�� 측정?�� ?��?�� ?��?�� 캡처 값을 ???��?��?��?��.
+		ulLastCaptureValue = ulCurrentCaptureValue;
+
+		// ?��?�� �??�� ?��간을 ?��?�� 보냅?��?��.
+		// ISR ?��?��?�� ?���? �??��?�� ?�� API�? ?��?��?��?��?��.
+		xQueueSendFromISR(xRemoteRxQueue, &ulPulseDuration, &xHigherPriorityTaskWoken);
+
+		// 만약 ?�� ?��?��?���? ?��?�� ?��?��?��?���? ?��?? ?��?��?��(RemoteRxTask)�? 깨어?��?���?,
+		// 문맥 ?��?��?�� ?���??��?��?��.
+		portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	}
+}
+
+/**
+  * @brief  Period elapsed half complete callback in non-blocking mode
+  * @param  htim TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedHalfCpltCallback(TIM_HandleTypeDef *htim)
+{
+  /* Prevent unused argument(s) compilation warning */
+	printf("[callback]HAL_TIM_PeriodElapsedHalfCpltCallback\n");
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_TIM_PeriodElapsedHalfCpltCallback could be implemented in the user file
+   */
+}
+
+/**
+  * @brief  Output Compare callback in non-blocking mode
+  * @param  htim TIM OC handle
+  * @retval None
+  */
+void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* Prevent unused argument(s) compilation warning */
+	//printf("[callback]HAL_TIM_OC_DelayElapsedCallback(PULSE=%d)\n", __HAL_TIM_GET_COMPARE(htim, TIM_CHANNEL_3));
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_TIM_OC_DelayElapsedCallback could be implemented in the user file
+   */
+}
+
+/**
+  * @brief  Input Capture half complete callback in non-blocking mode
+  * @param  htim TIM IC handle
+  * @retval None
+  */
+void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
+{
+  /* Prevent unused argument(s) compilation warning */
+	printf("[callback]HAL_TIM_IC_CaptureHalfCpltCallback\n");
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_TIM_IC_CaptureHalfCpltCallback could be implemented in the user file
+   */
+}
+
+/**
+  * @brief  PWM Pulse finished callback in non-blocking mode
+  * @param  htim TIM handle
+  * @retval None
+  */
+void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
+{
+  /* Prevent unused argument(s) compilation warning */
+	pwmCNT++;
+
+	if (!(pwmCNT%DIV)){
+		printf("[callback]HAL_TIM_PWM_PulseFinishedCallback(PULSE=%lu)\n", __HAL_TIM_GET_COUNTER(htim));
+		if (pwmReady){
+			__HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_3, 100);
+			pwmReady= FALSE;
+		}else{
+			__HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_3, 200);
+			pwmReady= TRUE;
+		}
+	}
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_TIM_PWM_PulseFinishedCallback could be implemented in the user file
+   */
+}
+
+/**
+  * @brief  PWM Pulse finished half complete callback in non-blocking mode
+  * @param  htim TIM handle
+  * @retval None
+  */
+void HAL_TIM_PWM_PulseFinishedHalfCpltCallback(TIM_HandleTypeDef *htim)
+{
+  /* Prevent unused argument(s) compilation warning */
+	printf("[callback]HAL_TIM_PWM_PulseFinishedHalfCpltCallback\n");
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_TIM_PWM_PulseFinishedHalfCpltCallback could be implemented in the user file
+   */
+}
+
+/**
+  * @brief  Hall Trigger detection callback in non-blocking mode
+  * @param  htim TIM handle
+  * @retval None
+  */
+void HAL_TIM_TriggerCallback(TIM_HandleTypeDef *htim)
+{
+  /* Prevent unused argument(s) compilation warning */
+	printf("[callback]HAL_TIM_TriggerCallback\n");
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_TIM_TriggerCallback could be implemented in the user file
+   */
+}
+
+/**
+  * @brief  Hall Trigger detection half complete callback in non-blocking mode
+  * @param  htim TIM handle
+  * @retval None
+  */
+void HAL_TIM_TriggerHalfCpltCallback(TIM_HandleTypeDef *htim)
+{
+  /* Prevent unused argument(s) compilation warning */
+	printf("[callback]HAL_TIM_TriggerHalfCpltCallback\n");
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_TIM_TriggerHalfCpltCallback could be implemented in the user file
+   */
+}
+
+/**
+  * @brief  Timer error callback in non-blocking mode
+  * @param  htim TIM handle
+  * @retval None
+  */
+void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
+{
+  /* Prevent unused argument(s) compilation warning */
+	printf("[callback]HAL_TIM_ErrorCallback\n");
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_TIM_ErrorCallback could be implemented in the user file
+   */
+}
+
 // version of this freertos
 char* OSVersion(void)
 {
