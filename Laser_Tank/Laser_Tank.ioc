@@ -30,6 +30,7 @@ FREERTOS.configUSE_MALLOC_FAILED_HOOK=1
 FREERTOS.configUSE_RECURSIVE_MUTEXES=1
 FREERTOS.configUSE_TIMERS=1
 File.Version=6
+GPIO.groupedBy=Group By Peripherals
 KeepUserPlacement=false
 LTDC.ActiveH=320
 LTDC.ActiveW=240
