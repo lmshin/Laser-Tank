@@ -15,6 +15,7 @@
   *
   ******************************************************************************
   */
+//
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -24,26 +25,26 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include <string.h>
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define __HAL_TIM_GET_PRESCALER(__HANDLE__)       ((__HANDLE__)->Instance->PSC)
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+//GimbalTask �?? ?��?�� 코드 ?��?��
+uint32_t current_pulse_vertical = 1500;
+uint32_t current_pulse_horizontal = 1500;
 
+////GimbalTask �?? ?��?�� 코드 종료
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-typedef int Bool;
-#define TRUE 1
-#define FALSE 0
-#define DIV	60
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -58,9 +59,7 @@ LTDC_HandleTypeDef hltdc;
 SPI_HandleTypeDef hspi5;
 
 TIM_HandleTypeDef htim1;
-TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
-TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart1;
 
@@ -68,29 +67,7 @@ SDRAM_HandleTypeDef hsdram1;
 
 osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
-Bool pwmReady=FALSE;
-uint32_t pwmCNT=0;
 
-int flag = 0;
-uint32_t v1 = 0;
-uint32_t v2 = 0;
-static int rmcNumber= 0;
-
-// FreeRTOS �??�� �??��
-TaskHandle_t xRemoteRxTaskHandle = NULL;
-// ?��?�� ?��비�?? ISR?��?�� RxTask�? ?��?��?���? ?��?�� ?��
-QueueHandle_t xRemoteRxQueue = NULL;
-// ?��코딩?�� 코드�? RxTask?��?�� ParserTask�? ?��?��?���? ?��?�� ?��
-QueueHandle_t xRemoteParserQueue = NULL;
-
-//GimbalTask 용 코드 시작
-uint32_t current_pulse_vertical = 1500;
-uint32_t current_pulse_horizontal = 1500;
-
-//GimbalTask 용 코드 종료
-
-static uint32_t ulLastCaptureValue = 0;
-static const uint32_t ulMaxPulseWidth_us = 3000; // ?��?�� 종료�? 감�??���? ?��?�� 최�? ?��?�� ?���?
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -104,13 +81,10 @@ static void MX_LTDC_Init(void);
 static void MX_SPI5_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_TIM4_Init(void);
 void StartDefaultTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
-static int getSigBitNumber(int usec);
 void USER_THREADS( void );
 void freertos_IntroTitle(void);
 
@@ -167,12 +141,8 @@ int main(void)
   MX_SPI5_Init();
   MX_TIM1_Init();
   MX_USART1_UART_Init();
-  MX_TIM2_Init();
   MX_TIM3_Init();
-  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2);
-
   /* display a freeRTOS Intro */
   freertos_IntroTitle();
 
@@ -183,11 +153,8 @@ int main(void)
 
 
   /* USER CODE END 2 */
-
-  //Gimbal 코드 시작
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);
-  //Gimbal 코드 종료
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -535,59 +502,6 @@ static void MX_TIM1_Init(void)
 }
 
 /**
-  * @brief TIM2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM2_Init(void)
-{
-
-  /* USER CODE BEGIN TIM2_Init 0 */
-
-  /* USER CODE END TIM2_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-
-  /* USER CODE BEGIN TIM2_Init 1 */
-
-  /* USER CODE END TIM2_Init 1 */
-  htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 4294967295;
-  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM2_Init 2 */
-
-  /* USER CODE END TIM2_Init 2 */
-  HAL_TIM_MspPostInit(&htim2);
-
-}
-
-/**
   * @brief TIM3 Initialization Function
   * @param None
   * @retval None
@@ -606,9 +520,9 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 49; //ioc 에서 설정정 클럭 주기에 따라 변경해주어야 한다.
+  htim3.Init.Prescaler = 84;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 19999;
+  htim3.Init.Period = 20000 - 1;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
@@ -622,7 +536,7 @@ static void MX_TIM3_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 1500;
+  sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
@@ -637,54 +551,6 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 2 */
   HAL_TIM_MspPostInit(&htim3);
-
-}
-
-/**
-  * @brief TIM4 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM4_Init(void)
-{
-
-  /* USER CODE BEGIN TIM4_Init 0 */
-
-  /* USER CODE END TIM4_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_IC_InitTypeDef sConfigIC = {0};
-
-  /* USER CODE BEGIN TIM4_Init 1 */
-
-  /* USER CODE END TIM4_Init 1 */
-  htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 83;
-  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 65535;
-  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
-  if (HAL_TIM_IC_Init(&htim4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  sConfigIC.ICFilter = 0;
-  if (HAL_TIM_IC_ConfigChannel(&htim4, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM4_Init 2 */
-
-  /* USER CODE END TIM4_Init 2 */
 
 }
 
@@ -790,7 +656,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, NCS_MEMS_SPI_Pin|CSX_Pin|OTG_FS_PSO_Pin|GPIO_PIN_11, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, NCS_MEMS_SPI_Pin|CSX_Pin|OTG_FS_PSO_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(ACP_RST_GPIO_Port, ACP_RST_Pin, GPIO_PIN_RESET);
@@ -801,21 +667,15 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOG, LD3_Pin|LD4_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : NCS_MEMS_SPI_Pin CSX_Pin OTG_FS_PSO_Pin PC11 */
-  GPIO_InitStruct.Pin = NCS_MEMS_SPI_Pin|CSX_Pin|OTG_FS_PSO_Pin|GPIO_PIN_11;
+  /*Configure GPIO pins : NCS_MEMS_SPI_Pin CSX_Pin OTG_FS_PSO_Pin */
+  GPIO_InitStruct.Pin = NCS_MEMS_SPI_Pin|CSX_Pin|OTG_FS_PSO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : MEMS_INT1_Pin MEMS_INT2_Pin TP_INT1_Pin */
-  GPIO_InitStruct.Pin = MEMS_INT1_Pin|MEMS_INT2_Pin|TP_INT1_Pin;
+  /*Configure GPIO pins : B1_Pin MEMS_INT1_Pin MEMS_INT2_Pin TP_INT1_Pin */
+  GPIO_InitStruct.Pin = B1_Pin|MEMS_INT1_Pin|MEMS_INT2_Pin|TP_INT1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -859,178 +719,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
-
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
-{
-	// TIM4, 채널 2?��?�� ?��?��?��?���? 발생?��?���? ?��?��
-	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)
-	{
-		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-		uint32_t ulCurrentCaptureValue;
-		uint32_t ulPulseDuration;
-
-		// ?��?�� 캡처 값을 ?��?��?��?��?��.
-		ulCurrentCaptureValue = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
-
-		// ?��?�� �??�� ?��간을 계산?��?��?��. ???���? ?��버플로우�? 처리?��?��?��.
-		if (ulCurrentCaptureValue >= ulLastCaptureValue) {
-			ulPulseDuration = ulCurrentCaptureValue - ulLastCaptureValue;
-		} else {
-			ulPulseDuration = (__HAL_TIM_GET_AUTORELOAD(htim) - ulLastCaptureValue) + ulCurrentCaptureValue;
-		}
-
-		// ?��?�� 측정?�� ?��?�� ?��?�� 캡처 값을 ???��?��?��?��.
-		ulLastCaptureValue = ulCurrentCaptureValue;
-
-		// ?��?�� �??�� ?��간을 ?��?�� 보냅?��?��.
-		// ISR ?��?��?�� ?���? �??��?�� ?�� API�? ?��?��?��?��?��.
-		xQueueSendFromISR(xRemoteRxQueue, &ulPulseDuration, &xHigherPriorityTaskWoken);
-
-		// 만약 ?�� ?��?��?���? ?��?�� ?��?��?��?���? ?��?? ?��?��?��(RemoteRxTask)�? 깨어?��?���?,
-		// 문맥 ?��?��?�� ?���??��?��?��.
-		portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-	}
-}
-
-/**
-  * @brief  Period elapsed half complete callback in non-blocking mode
-  * @param  htim TIM handle
-  * @retval None
-  */
-void HAL_TIM_PeriodElapsedHalfCpltCallback(TIM_HandleTypeDef *htim)
-{
-  /* Prevent unused argument(s) compilation warning */
-	printf("[callback]HAL_TIM_PeriodElapsedHalfCpltCallback\n");
-
-  /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_PeriodElapsedHalfCpltCallback could be implemented in the user file
-   */
-}
-
-/**
-  * @brief  Output Compare callback in non-blocking mode
-  * @param  htim TIM OC handle
-  * @retval None
-  */
-void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
-{
-  /* Prevent unused argument(s) compilation warning */
-	//printf("[callback]HAL_TIM_OC_DelayElapsedCallback(PULSE=%d)\n", __HAL_TIM_GET_COMPARE(htim, TIM_CHANNEL_3));
-
-  /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_OC_DelayElapsedCallback could be implemented in the user file
-   */
-}
-
-/**
-  * @brief  Input Capture half complete callback in non-blocking mode
-  * @param  htim TIM IC handle
-  * @retval None
-  */
-void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
-{
-  /* Prevent unused argument(s) compilation warning */
-	printf("[callback]HAL_TIM_IC_CaptureHalfCpltCallback\n");
-
-  /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_IC_CaptureHalfCpltCallback could be implemented in the user file
-   */
-}
-
-/**
-  * @brief  PWM Pulse finished callback in non-blocking mode
-  * @param  htim TIM handle
-  * @retval None
-  */
-void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
-{
-  /* Prevent unused argument(s) compilation warning */
-	pwmCNT++;
-
-	if (!(pwmCNT%DIV)){
-		printf("[callback]HAL_TIM_PWM_PulseFinishedCallback(PULSE=%lu)\n", __HAL_TIM_GET_COUNTER(htim));
-		if (pwmReady){
-			__HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_3, 100);
-			pwmReady= FALSE;
-		}else{
-			__HAL_TIM_SET_COMPARE(htim, TIM_CHANNEL_3, 200);
-			pwmReady= TRUE;
-		}
-	}
-  /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_PWM_PulseFinishedCallback could be implemented in the user file
-   */
-}
-
-/**
-  * @brief  PWM Pulse finished half complete callback in non-blocking mode
-  * @param  htim TIM handle
-  * @retval None
-  */
-void HAL_TIM_PWM_PulseFinishedHalfCpltCallback(TIM_HandleTypeDef *htim)
-{
-  /* Prevent unused argument(s) compilation warning */
-	printf("[callback]HAL_TIM_PWM_PulseFinishedHalfCpltCallback\n");
-
-  /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_PWM_PulseFinishedHalfCpltCallback could be implemented in the user file
-   */
-}
-
-/**
-  * @brief  Hall Trigger detection callback in non-blocking mode
-  * @param  htim TIM handle
-  * @retval None
-  */
-void HAL_TIM_TriggerCallback(TIM_HandleTypeDef *htim)
-{
-  /* Prevent unused argument(s) compilation warning */
-	printf("[callback]HAL_TIM_TriggerCallback\n");
-
-  /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_TriggerCallback could be implemented in the user file
-   */
-}
-
-/**
-  * @brief  Hall Trigger detection half complete callback in non-blocking mode
-  * @param  htim TIM handle
-  * @retval None
-  */
-void HAL_TIM_TriggerHalfCpltCallback(TIM_HandleTypeDef *htim)
-{
-  /* Prevent unused argument(s) compilation warning */
-	printf("[callback]HAL_TIM_TriggerHalfCpltCallback\n");
-
-  /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_TriggerHalfCpltCallback could be implemented in the user file
-   */
-}
-
-/**
-  * @brief  Timer error callback in non-blocking mode
-  * @param  htim TIM handle
-  * @retval None
-  */
-void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
-{
-  /* Prevent unused argument(s) compilation warning */
-	printf("[callback]HAL_TIM_ErrorCallback\n");
-
-  /* NOTE : This function should not be modified, when the callback is needed,
-            the HAL_TIM_ErrorCallback could be implemented in the user file
-   */
-}
-
 // version of this freertos
 char* OSVersion(void)
 {
