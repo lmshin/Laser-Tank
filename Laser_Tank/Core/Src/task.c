@@ -14,6 +14,26 @@
 #define BIT1_A	2000
 #define BIT1_B	2500
 
+// L298N 모터 드라이버 핀 정의
+#define LEFT_MOTOR_IN1_PORT GPIOD
+#define LEFT_MOTOR_IN1_PIN GPIO_PIN_4
+#define LEFT_MOTOR_IN2_PORT GPIOD
+#define LEFT_MOTOR_IN2_PIN GPIO_PIN_5
+
+#define RIGHT_MOTOR_IN1_PORT GPIOC
+#define RIGHT_MOTOR_IN1_PIN GPIO_PIN_2
+#define RIGHT_MOTOR_IN2_PORT GPIOC
+#define RIGHT_MOTOR_IN2_PIN GPIO_PIN_3
+
+// L298N ENA (속도) 핀 정의 (PWM 사용)
+#define LEFT_MOTOR_ENA_TIMER htim2 // 왼쪽 모터 ENA 핀에 연결된 타이머 핸들
+#define LEFT_MOTOR_ENA_CHANNEL TIM_CHANNEL_1 // 해당 타이머의 채널
+#define RIGHT_MOTOR_ENA_TIMER htim2 // 오른쪽 모터 ENA 핀에 연결된 타이머 핸들
+#define RIGHT_MOTOR_ENA_CHANNEL TIM_CHANNEL_2 // 해당 타이머의 채널
+
+// vDriveControlTask PWM 최대 값 (타이머 설정에 따라 변경)
+#define PWM_MAX_VALUE 65535
+
 /* task's priority */
 #define MAIN_TASK_PRIO	1
 #define RX_TASK_PRIO 5
@@ -28,7 +48,7 @@ static int getSigBitNumber( int usec );
 void vRemoteRxTask( void *pvParameters );
 void vRemoteParserTask( void *pvParameters );
 void GimbalControlTask( void *pvParameters );
-void DriveControlTask( void *pvParameters );
+void vDriveControlTask( void *pvParameters );
 void stopLaserTimerCallback( TimerHandle_t xTimer );
 void vLaserControlTask( void *pvParameters );
 
@@ -37,7 +57,7 @@ void vLaserControlTask( void *pvParameters );
  * 메시지큐 & 사용자 정의 블럭 정의
  * ===================
  */
-QueueHandle_t GimbalQueue, DriveQueue, xLaserQueue;
+QueueHandle_t GimbalQueue, xDriveQueue, xLaserQueue;
 extern QueueHandle_t xRemoteRxQueue, xRemoteParserQueue;
 TimerHandle_t GimbalTimer, DriveTimer, xLaserTimer;
 TaskHandle_t xHandleMain;
@@ -61,14 +81,16 @@ typedef struct {
 } Message_t;
 
 typedef enum {
-    LASER_START,
-    LASER_STOP
-} LaserEventType;
+	DRIVE_FORWARD,
+	DRIVE_BACKWARD,
+	DRIVE_CW,
+	DRIVE_CCW,
+	DRIVE_STOP
+} DriveEventType;
 
 typedef struct {
-    LaserEventType eventType;
-} LaserMessage_t;
-
+	DriveEventType eventType;
+} DriveMessage_t;
 
 /*-----------------------------------------------------------*/
 
@@ -89,21 +111,26 @@ void USER_THREADS( void )
 					&xHandleMain );		/* We are not using the task handle. */
 #endif
 
+	// 모터 제어를 위한 PWM 타이머 시작
+	HAL_TIM_PWM_Start(&LEFT_MOTOR_ENA_TIMER, LEFT_MOTOR_ENA_CHANNEL);
+	HAL_TIM_PWM_Start(&RIGHT_MOTOR_ENA_TIMER, RIGHT_MOTOR_ENA_CHANNEL);
+
 	// 펄스 너비 정보를 전달할 큐 생성 (ISR -> RxTask)
 	xRemoteRxQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
 
 	// 디코딩된 코드를 전달할 큐 생성 (RxTask -> ParserTask)
 	xRemoteParserQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
 
-	xLaserQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
-	if (xRemoteRxQueue == NULL || xRemoteParserQueue == NULL || xLaserQueue == NULL) {
+	xDriveQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
+	if (xRemoteRxQueue == NULL || xRemoteParserQueue == NULL || xDriveQueue == NULL) {
 		printf("Error: 큐 생성 실패.\n");
 		Error_Handler();
 	}
-    // 태스크 생성
+
+	// 태스크 생성
     xTaskCreate( (TaskFunction_t)vRemoteRxTask, "RemoteRxTask", 256, NULL, RX_TASK_PRIO, &xRemoteRxTaskHandle );
     xTaskCreate( (TaskFunction_t)vRemoteParserTask, "RemoteParserTask", 256, NULL, PARSER_TASK_PRIO, NULL );
-    xTaskCreate( (TaskFunction_t)vLaserControlTask, "LaserControlTask", 256, NULL, LASER_TASK_PRIO, NULL );
+    xTaskCreate( (TaskFunction_t)vDriveControlTask, "DriveControlTask", 256, NULL, DRIVE_TASK_PRIO, NULL );
 
     vTaskStartScheduler();
 }
@@ -219,7 +246,7 @@ void vRemoteRxTask( void *pvParameters )
 void vRemoteParserTask( void *pvParameters )
 {
     const char *pcTaskName = "RemoteParserTask";
-    //Message_t msg;
+    DriveMessage_t dmsg;
 
     printf( "%s is running\r\n", pcTaskName );
 
@@ -242,16 +269,46 @@ void vRemoteParserTask( void *pvParameters )
 //				case IR_CODE_RIGHT:
 //					// xQueueSend( xDriveQueue, ...);
 //					break;
-			case 0x001FED12:
-				// 메시지 구조체 생성
-				LaserMessage_t msg;
-				msg.eventType = LASER_START;
-
+            case 0x001FE31C: // 2
+				dmsg.eventType = DRIVE_FORWARD;
+				printf("frontward");
 				// 큐에 메시지 전송
-				if ( xQueueSend( xLaserQueue, &msg, 0 ) != pdPASS ) {
-					printf("xLaserQueue error\n");
+				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
+					printf("xDriveQueue error\n");
 				}
-				break;
+                break;
+            case 0x001FEB57: // 바꿔야함
+				dmsg.eventType = DRIVE_BACKWARD;
+				printf("backward");
+				// 큐에 메시지 전송
+				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
+					printf("xDriveQueue error\n");
+				}
+                break;
+            case 0x001FEB54: // 6
+				dmsg.eventType = DRIVE_CW;
+				printf("cw");
+				// 큐에 메시지 전송
+				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
+					printf("xDriveQueue error\n");
+				}
+                break;
+            case 0x001FE21D: // 4
+				dmsg.eventType = DRIVE_CCW;
+				printf("ccw");
+				// 큐에 메시지 전송
+				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
+					printf("xDriveQueue error\n");
+				}
+                break;
+            case 0x001FE718: // 5
+				dmsg.eventType = DRIVE_STOP;
+				printf("stop");
+				// 큐에 메시지 전송
+				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
+					printf("xDriveQueue error\n");
+				}
+                break;
 			default:
 				break;
 			}
@@ -292,23 +349,109 @@ void GimbalControlTask( void *pvParameters )
 }
 /*-----------------------------------------------------------*/
 
-void DriveControlTask( void *pvParameters )
+void vDriveControlTask( void *pvParameters )
 {
     const char *pcTaskName = "DriveControlTask";
-    Message_t msg;
+    DriveMessage_t msg;
 
     printf( "%s is running\r\n", pcTaskName );
 
     // 큐 생성
-    //DriveQueue = xQueueCreate(QUEUE_LENGTH, sizeof(DriveMessage_t));
-    if (DriveQueue == NULL) {
-        // 오류 처리
-        printf("xQueueCreate error found(DriveQueue)\n");
+    xDriveQueue = xQueueCreate(QUEUE_LENGTH, sizeof(DriveMessage_t));
+    if (xDriveQueue == NULL) {
+        printf("xQueueCreate error found(xDriveQueue)\n");
+        vTaskDelete(NULL);
     }
 
     // 무한 루프: 큐에서 메시지를 대기하고 처리
     while (1) {
-        if (xQueueReceive(DriveQueue, &msg, portMAX_DELAY) == pdPASS) {
+        if (xQueueReceive(xDriveQueue, &msg, portMAX_DELAY) == pdPASS) {
+            switch (msg.eventType) {
+			case DRIVE_FORWARD:
+				printf("Received DRIVE_FORWARD message\n");
+				// 전진: 왼쪽과 오른쪽 모터 모두 정방향으로 최대 속도 회전
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
+				//HAL_TIM_SetCompare(&LEFT_MOTOR_ENA_TIMER, LEFT_MOTOR_ENA_CHANNEL, PWM_MAX_VALUE);
+
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN1_PORT, RIGHT_MOTOR_IN1_PIN, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN2_PORT, RIGHT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
+				//HAL_TIM_SetCompare(&RIGHT_MOTOR_ENA_TIMER, RIGHT_MOTOR_ENA_CHANNEL, PWM_MAX_VALUE);
+				break;
+
+			case DRIVE_BACKWARD:
+				printf("Received DRIVE_BACKWARD message\n");
+				// 후진: 왼쪽과 오른쪽 모터 모두 역방향으로 최대 속도 회전
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_SET);
+				//HAL_TIM_SetCompare(&LEFT_MOTOR_ENA_TIMER, LEFT_MOTOR_ENA_CHANNEL, PWM_MAX_VALUE);
+
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN1_PORT, RIGHT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN2_PORT, RIGHT_MOTOR_IN2_PIN, GPIO_PIN_SET);
+				//HAL_TIM_SetCompare(&RIGHT_MOTOR_ENA_TIMER, RIGHT_MOTOR_ENA_CHANNEL, PWM_MAX_VALUE);
+				break;
+
+			case DRIVE_CW:
+				printf("Received DRIVE_CW message\n");
+				// 시계방향 회전: 왼쪽(전진), 오른쪽(후진)
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
+				//HAL_TIM_SetCompare(&LEFT_MOTOR_ENA_TIMER, LEFT_MOTOR_ENA_CHANNEL, PWM_MAX_VALUE);
+
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN1_PORT, RIGHT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN2_PORT, RIGHT_MOTOR_IN2_PIN, GPIO_PIN_SET);
+				//HAL_TIM_SetCompare(&RIGHT_MOTOR_ENA_TIMER, RIGHT_MOTOR_ENA_CHANNEL, PWM_MAX_VALUE);
+				break;
+
+			case DRIVE_CCW:
+				printf("Received DRIVE_CCW message\n");
+				// 반시계방향 회전: 왼쪽(후진), 오른쪽(전진)
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_SET);
+				//HAL_TIM_SetCompare(&LEFT_MOTOR_ENA_TIMER, LEFT_MOTOR_ENA_CHANNEL, PWM_MAX_VALUE);
+
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN1_PORT, RIGHT_MOTOR_IN1_PIN, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN2_PORT, RIGHT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
+				//HAL_TIM_SetCompare(&RIGHT_MOTOR_ENA_TIMER, RIGHT_MOTOR_ENA_CHANNEL, PWM_MAX_VALUE);
+				break;
+
+			case DRIVE_STOP:
+				printf("Received DRIVE_STOP message\n");
+				// 정지: 모든 모터 정지 (IN1/IN2 모두 LOW로 설정)
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
+
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN1_PORT, RIGHT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(RIGHT_MOTOR_IN2_PORT, RIGHT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
+
+				// PWM 듀티 사이클을 0으로 설정
+				//HAL_TIM_SetCompare(&LEFT_MOTOR_ENA_TIMER, LEFT_MOTOR_ENA_CHANNEL, 0);
+				//HAL_TIM_SetCompare(&RIGHT_MOTOR_ENA_TIMER, RIGHT_MOTOR_ENA_CHANNEL, 0);
+				break;
+			}
+		}
+	}
+}
+/*-----------------------------------------------------------*/
+
+void vLaserControlTask( void *pvParameters )
+{
+    const char *pcTaskName = "LaserControlTask";
+    Message_t msg;
+
+
+    printf( "%s is running\r\n", pcTaskName );
+
+    // 큐 생성
+    //xLaserQueue = xQueueCreate(QUEUE_LENGTH, sizeof(LaserMessage_t));
+    if (xLaserQueue == NULL) {
+		// 오류 처리
+		printf("xQueueCreate error found(laserQueue)\n");
+	}
+
+    // 무한 루프: 큐에서 메시지를 대기하고 처리
+    while (1) {
+        if (xQueueReceive(xLaserQueue, &msg, portMAX_DELAY) == pdPASS) {
             switch (msg.eventType) {
                 //case EVENT_NUM01:
                     //break;
@@ -318,65 +461,6 @@ void DriveControlTask( void *pvParameters )
 
                 //case EVENT_NUM03:
                     //break;
-            }
-        }
-    }
-}
-/*-----------------------------------------------------------*/
-void stopLaserTimerCallback( TimerHandle_t xTimer )
-{
-    LaserMessage_t stopMsg = { .eventType = LASER_STOP };
-    xQueueSend(xLaserQueue, &stopMsg, 0); // 큐로 정지 메시지 전송
-}
-
-void vLaserControlTask( void *pvParameters )
-{
-    const char *pcTaskName = "LaserControlTask";
-    LaserMessage_t msg;
-
-
-    printf( "%s is running\r\n", pcTaskName );
-
-    // 큐 생성
-    xLaserQueue = xQueueCreate(QUEUE_LENGTH, sizeof(LaserMessage_t));
-    if (xLaserQueue == NULL) {
-        // 오류 처리
-        printf("xQueueCreate error found(laserQueue)\n");
-    }
-
-    // 타이머 생성 (500ms 후 1회 실행)
-    xLaserTimer = xTimerCreate(
-        "LaserTimer",
-        pdMS_TO_TICKS(500),         // 500ms
-        pdFALSE,                    // One-Shot 타이머 (한번만 실행)
-        (void *)0,
-        stopLaserTimerCallback
-    );
-    if (xLaserTimer == NULL) {
-        // 오류 처리
-        printf("xTimerCreate error found(laserTimer)\n");
-    }
-
-    // 무한 루프: 큐에서 메시지를 대기하고 처리
-    bool sw = false;
-    while (1) {
-    	if (xQueueReceive(xLaserQueue, &msg, portMAX_DELAY) == pdPASS) {
-				switch (msg.eventType) {
-                case LASER_START:
-                	if (sw) break;
-                    printf("Received LASER_START message\n");
-                    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_SET);
-                    // 정해진 시간 후 끄기 위해 타이머 시작
-                    xTimerStart(xLaserTimer, 0);
-                    sw = true;
-                    break;
-
-                case LASER_STOP:
-                    printf("Received LASER_STOP message\n");
-                    // 타이머 콜백 함수에서 보낸 메시지를 받아서 중지
-                    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET);
-                    sw = false;
-                    break;
             }
         }
     }
