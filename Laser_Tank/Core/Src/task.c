@@ -7,7 +7,7 @@
 #include "timers.h"
 #include "main.h"
 
-#define MAX_LENGTH_REMOCON_CODE	31
+#define MAX_LENGTH_REMOCON_CODE	32
 
 #define BIT0_A	1000
 #define BIT0_B	1500
@@ -269,41 +269,36 @@ void vRemoteParserTask( void *pvParameters )
 //				case IR_CODE_RIGHT:
 //					// xQueueSend( xDriveQueue, ...);
 //					break;
-            case 0x001FE31C: // 2
+            case 0x003FC639: // 2
 				dmsg.eventType = DRIVE_FORWARD;
-				printf("frontward");
 				// 큐에 메시지 전송
 				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
 					printf("xDriveQueue error\n");
 				}
                 break;
-            case 0x001FEB57: // 바꿔야함
+            case 0x003FD2AD: // 8
 				dmsg.eventType = DRIVE_BACKWARD;
-				printf("backward");
 				// 큐에 메시지 전송
 				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
 					printf("xDriveQueue error\n");
 				}
                 break;
-            case 0x001FEB54: // 6
+            case 0x003FD6A9: // 6
 				dmsg.eventType = DRIVE_CW;
-				printf("cw");
 				// 큐에 메시지 전송
 				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
 					printf("xDriveQueue error\n");
 				}
                 break;
-            case 0x001FE21D: // 4
+            case 0x003FC43B: // 4
 				dmsg.eventType = DRIVE_CCW;
-				printf("ccw");
 				// 큐에 메시지 전송
 				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
 					printf("xDriveQueue error\n");
 				}
                 break;
-            case 0x001FE718: // 5
+            case 0x003FCE31: // 5
 				dmsg.eventType = DRIVE_STOP;
-				printf("stop");
 				// 큐에 메시지 전송
 				if ( xQueueSend( xDriveQueue, &dmsg, 0 ) != pdPASS ) {
 					printf("xDriveQueue error\n");
@@ -368,7 +363,7 @@ void vDriveControlTask( void *pvParameters )
         if (xQueueReceive(xDriveQueue, &msg, portMAX_DELAY) == pdPASS) {
             switch (msg.eventType) {
 			case DRIVE_FORWARD:
-				printf("Received DRIVE_FORWARD message\n");
+				printf("FORWARD\n");
 				// 전진: 왼쪽과 오른쪽 모터 모두 정방향으로 최대 속도 회전
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_SET);
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
@@ -380,7 +375,7 @@ void vDriveControlTask( void *pvParameters )
 				break;
 
 			case DRIVE_BACKWARD:
-				printf("Received DRIVE_BACKWARD message\n");
+				printf("BACKWARD\n");
 				// 후진: 왼쪽과 오른쪽 모터 모두 역방향으로 최대 속도 회전
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_SET);
@@ -392,7 +387,7 @@ void vDriveControlTask( void *pvParameters )
 				break;
 
 			case DRIVE_CW:
-				printf("Received DRIVE_CW message\n");
+				printf("CW\n");
 				// 시계방향 회전: 왼쪽(전진), 오른쪽(후진)
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_SET);
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
@@ -404,7 +399,7 @@ void vDriveControlTask( void *pvParameters )
 				break;
 
 			case DRIVE_CCW:
-				printf("Received DRIVE_CCW message\n");
+				printf("CCW\n");
 				// 반시계방향 회전: 왼쪽(후진), 오른쪽(전진)
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_SET);
@@ -416,7 +411,7 @@ void vDriveControlTask( void *pvParameters )
 				break;
 
 			case DRIVE_STOP:
-				printf("Received DRIVE_STOP message\n");
+				printf("STOP\n");
 				// 정지: 모든 모터 정지 (IN1/IN2 모두 LOW로 설정)
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN1_PORT, LEFT_MOTOR_IN1_PIN, GPIO_PIN_RESET);
 				HAL_GPIO_WritePin(LEFT_MOTOR_IN2_PORT, LEFT_MOTOR_IN2_PIN, GPIO_PIN_RESET);
