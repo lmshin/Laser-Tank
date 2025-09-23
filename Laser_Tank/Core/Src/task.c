@@ -22,6 +22,48 @@
 #define DRIVE_TASK_PRIO 1
 #define LASER_TASK_PRIO 2
 
+//GimbalTask 를 위한 코드 시작
+#include "stm32f4xx_hal.h"
+extern TIM_HandleTypeDef htim3;
+
+#define PULSE_INCREMENT 100 // 조정 단위
+#define MAX_PULSE_VERTICAL 2000
+#define MIN_PULSE_VERTICAL 1000
+#define MAX_PULSE_HORIZONTAL 2000
+#define MIN_PULSE_HORIZONTAL 1000
+
+
+extern uint32_t current_pulse_vertical;
+extern uint32_t current_pulse_horizontal;
+QueueHandle_t qid;
+#define Test_TASK_ID	12345
+
+typedef enum {
+	VERTICAL_DOWN,
+	VERTICAL_UP,
+	HORIZONTAL_LEFT,
+	HORIZONTAL_RIGHT,
+
+} MotorCommand;
+
+typedef struct {
+	char ucMessageID;;
+	MotorCommand motorCommand;
+    // ...etc
+} Gimbal_Message_t;
+
+TaskHandle_t xHandleGimbal;
+
+//typedef struct tag_qBuffer {
+//	char ucMessageID;
+//	char ucData[10]; // bugfix. 배열의 크기에 따른 스택오버플로우 발생 위험(2021/9/5)
+//}qBuffer;
+
+#define QUEUE_ITEM_SIZE sizeof(Gimbal_Message_t)
+
+////GimbalTask 를 위한 코드 종료
+
+
 /* The task functions. */
 void MainTask( void *pvParameters );
 static int getSigBitNumber( int usec );
@@ -95,14 +137,19 @@ void USER_THREADS( void )
 	// 디코딩된 코드를 전달할 큐 생성 (RxTask -> ParserTask)
 	xRemoteParserQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
 
+	//Gimbal에서 코드를 입력받을 큐 생성 (ParserTask -> GimbalControlTask)
+	xGimbalControlQueue =  xQueueCreate(QUEUE_LENGTH, QUEUE_ITEM_SIZE);
 	xLaserQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
-	if (xRemoteRxQueue == NULL || xRemoteParserQueue == NULL || xLaserQueue == NULL) {
+	if (xRemoteRxQueue == NULL || xRemoteParserQueue == NULL || xLaserQueue == NULL || xGimbalControlQueue == NULL) {
 		printf("Error: 큐 생성 실패.\n");
 		Error_Handler();
 	}
     // 태스크 생성
     xTaskCreate( (TaskFunction_t)vRemoteRxTask, "RemoteRxTask", 256, NULL, RX_TASK_PRIO, &xRemoteRxTaskHandle );
     xTaskCreate( (TaskFunction_t)vRemoteParserTask, "RemoteParserTask", 256, NULL, PARSER_TASK_PRIO, NULL );
+  
+    //Gimbal 제어 테스크 생성
+    xTaskCreate(  (TaskFunction_t)GimbalControlTask, "GimbalTask", configMINIMAL_STACK_SIZE * 2, NULL, GIMBAL_TASK_PRIO, &xHandleGimbal );
     xTaskCreate( (TaskFunction_t)vLaserControlTask, "LaserControlTask", 256, NULL, LASER_TASK_PRIO, NULL );
 
     vTaskStartScheduler();
@@ -233,6 +280,7 @@ void vRemoteParserTask( void *pvParameters )
 			// 수신된 코드를 파싱
 			printf("파서 태스크에서 코드 수신: 0x%08lX\n", ulReceivedCode); fflush(stdout);
 
+			//이게
 			switch( ulReceivedCode )
 			{
 				// 예시: 리모콘 코드를 기반으로 다른 큐에 메시지 전송
@@ -262,33 +310,60 @@ void vRemoteParserTask( void *pvParameters )
 
 void GimbalControlTask( void *pvParameters )
 {
-    const char *pcTaskName = "GimbalControlTask";
-    Message_t msg;
+	const char *pcTaskName = "GimbalControlTask";
+	    Gimbal_Message_t msg;
 
-    printf( "%s is running\r\n", pcTaskName );
+	    printf( "%s is running\r\n", pcTaskName );
 
-    // 큐 생성
-    //GimbalQueue = xQueueCreate(QUEUE_LENGTH, sizeof(GimbalMessage_t));
-    if (GimbalQueue == NULL) {
-        // 오류 처리
-        printf("xQueueCreate error found(GimbalQueue)\n");
-    }
+	    // 큐 생성
+	//    GimbalQueue = xQueueCreate(QUEUE_LENGTH, sizeof(Gimbal_Message_t));
+	//    if (GimbalQueue == NULL) {
+	//        // 오류 처리
+	//        printf("xQueueCreate error found(GimbalQueue)\n");
+	//    }
 
-    // 무한 루프: 큐에서 메시지를 대기하고 처리
-    while (1) {
-        if (xQueueReceive(GimbalQueue, &msg, portMAX_DELAY) == pdPASS) {
-            switch (msg.eventType) {
-                //case EVENT_NUM01:
-                    //break;
+	    // 무한 루프: 큐에서 메시지를 대기하고 처리
+	    while (1) {
+	        if (xQueueReceive(qid, &msg, portMAX_DELAY) == pdPASS) {
+	            switch (msg.motorCommand) {
+	                case VERTICAL_DOWN:
+	                	current_pulse_vertical -= PULSE_INCREMENT;
+	                	if(current_pulse_vertical < MIN_PULSE_VERTICAL){
+	                		current_pulse_vertical = MIN_PULSE_VERTICAL;
+	                	}
+	                	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, current_pulse_vertical);
+	                	printf("VERTICAL_DOWN\n");
+	                    break;
 
-                //case EVENT_NUM02:
-                    //break;
+	                case VERTICAL_UP:
+	                	current_pulse_vertical += PULSE_INCREMENT;
+	                	if(current_pulse_vertical > MAX_PULSE_VERTICAL){
+	                		current_pulse_vertical = MAX_PULSE_VERTICAL;
+	                	}
+	                	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, current_pulse_vertical);
+	                	printf("VERTICAL_UP\n");
+	                    break;
 
-                //case EVENT_NUM03:
-                    //break;
-            }
-        }
-    }
+	                case HORIZONTAL_LEFT:
+	                	current_pulse_horizontal  -= PULSE_INCREMENT;
+	                	if(current_pulse_horizontal < MIN_PULSE_HORIZONTAL){
+	                		current_pulse_horizontal = MIN_PULSE_VERTICAL;
+	                    }
+	                	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, current_pulse_horizontal);
+	                	printf("HORIZONTAL_LEFT\n");
+	                    break;
+
+	                case HORIZONTAL_RIGHT:
+	                	current_pulse_horizontal  += PULSE_INCREMENT;
+	                	 if(current_pulse_horizontal > MAX_PULSE_HORIZONTAL){
+	                		 current_pulse_horizontal = MAX_PULSE_HORIZONTAL;
+	                	 }
+	                	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, current_pulse_horizontal);
+	                	printf("HORIZONTAL_RIGHT\n");
+	                    break;
+	            }
+	        }
+	    }
 }
 /*-----------------------------------------------------------*/
 
