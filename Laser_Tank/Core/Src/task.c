@@ -1,9 +1,11 @@
 /* FreeRTOS.org includes. */
 #include <stdio.h>
+#include <stdbool.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
 #include "timers.h"
+#include "main.h"
 
 #define MAX_LENGTH_REMOCON_CODE	31
 
@@ -69,16 +71,17 @@ void vRemoteRxTask( void *pvParameters );
 void vRemoteParserTask( void *pvParameters );
 void GimbalControlTask( void *pvParameters );
 void DriveControlTask( void *pvParameters );
-void LaserControlTask( void *pvParameters );
+void stopLaserTimerCallback( TimerHandle_t xTimer );
+void vLaserControlTask( void *pvParameters );
 
 /* ...........................................................................
  *
  * 메시지큐 & 사용자 정의 블럭 정의
  * ===================
  */
-QueueHandle_t GimbalQueue, DriveQueue, LaserQueue;
+QueueHandle_t GimbalQueue, DriveQueue, xLaserQueue;
 extern QueueHandle_t xRemoteRxQueue, xRemoteParserQueue;
-TimerHandle_t GimbalTimer, DriveTimer, LaserTimer;
+TimerHandle_t GimbalTimer, DriveTimer, xLaserTimer;
 TaskHandle_t xHandleMain;
 extern TaskHandle_t xRemoteRxTaskHandle;
 
@@ -98,6 +101,16 @@ typedef struct {
     EventType eventType;
     // ...etc
 } Message_t;
+
+typedef enum {
+    LASER_START,
+    LASER_STOP
+} LaserEventType;
+
+typedef struct {
+    LaserEventType eventType;
+} LaserMessage_t;
+
 
 /*-----------------------------------------------------------*/
 
@@ -126,16 +139,19 @@ void USER_THREADS( void )
 
 	//Gimbal에서 코드를 입력받을 큐 생성 (ParserTask -> GimbalControlTask)
 	xGimbalControlQueue =  xQueueCreate(QUEUE_LENGTH, QUEUE_ITEM_SIZE);
-
-	if (xRemoteRxQueue == NULL || xRemoteParserQueue == NULL || xGimbalControlQueue == NULL) {
+	xLaserQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
+	if (xRemoteRxQueue == NULL || xRemoteParserQueue == NULL || xLaserQueue == NULL || xGimbalControlQueue == NULL) {
 		printf("Error: 큐 생성 실패.\n");
 		Error_Handler();
 	}
     // 태스크 생성
     xTaskCreate( (TaskFunction_t)vRemoteRxTask, "RemoteRxTask", 256, NULL, RX_TASK_PRIO, &xRemoteRxTaskHandle );
     xTaskCreate( (TaskFunction_t)vRemoteParserTask, "RemoteParserTask", 256, NULL, PARSER_TASK_PRIO, NULL );
+  
     //Gimbal 제어 테스크 생성
     xTaskCreate(  (TaskFunction_t)GimbalControlTask, "GimbalTask", configMINIMAL_STACK_SIZE * 2, NULL, GIMBAL_TASK_PRIO, &xHandleGimbal );
+    xTaskCreate( (TaskFunction_t)vLaserControlTask, "LaserControlTask", 256, NULL, LASER_TASK_PRIO, NULL );
+
     vTaskStartScheduler();
 }
 /*-----------------------------------------------------------*/
@@ -274,8 +290,18 @@ void vRemoteParserTask( void *pvParameters )
 //				case IR_CODE_RIGHT:
 //					// xQueueSend( xDriveQueue, ...);
 //					break;
-				default:
-					break;
+			case 0x001FED12:
+				// 메시지 구조체 생성
+				LaserMessage_t msg;
+				msg.eventType = LASER_START;
+
+				// 큐에 메시지 전송
+				if ( xQueueSend( xLaserQueue, &msg, 0 ) != pdPASS ) {
+					printf("xLaserQueue error\n");
+				}
+				break;
+			default:
+				break;
 			}
 		}
 	}
@@ -372,33 +398,60 @@ void DriveControlTask( void *pvParameters )
     }
 }
 /*-----------------------------------------------------------*/
+void stopLaserTimerCallback( TimerHandle_t xTimer )
+{
+    LaserMessage_t stopMsg = { .eventType = LASER_STOP };
+    xQueueSend(xLaserQueue, &stopMsg, 0); // 큐로 정지 메시지 전송
+}
 
-void LaserControlTask( void *pvParameters )
+void vLaserControlTask( void *pvParameters )
 {
     const char *pcTaskName = "LaserControlTask";
-    Message_t msg;
+    LaserMessage_t msg;
+
 
     printf( "%s is running\r\n", pcTaskName );
 
     // 큐 생성
-    //LaserQueue = xQueueCreate(QUEUE_LENGTH, sizeof(LaserMessage_t));
-    if (LaserQueue == NULL) {
+    xLaserQueue = xQueueCreate(QUEUE_LENGTH, sizeof(LaserMessage_t));
+    if (xLaserQueue == NULL) {
         // 오류 처리
-        printf("xQueueCreate error found(LaserQueue)\n");
+        printf("xQueueCreate error found(laserQueue)\n");
+    }
+
+    // 타이머 생성 (500ms 후 1회 실행)
+    xLaserTimer = xTimerCreate(
+        "LaserTimer",
+        pdMS_TO_TICKS(500),         // 500ms
+        pdFALSE,                    // One-Shot 타이머 (한번만 실행)
+        (void *)0,
+        stopLaserTimerCallback
+    );
+    if (xLaserTimer == NULL) {
+        // 오류 처리
+        printf("xTimerCreate error found(laserTimer)\n");
     }
 
     // 무한 루프: 큐에서 메시지를 대기하고 처리
+    bool sw = false;
     while (1) {
-        if (xQueueReceive(LaserQueue, &msg, portMAX_DELAY) == pdPASS) {
-            switch (msg.eventType) {
-                //case EVENT_NUM01:
-                    //break;
+    	if (xQueueReceive(xLaserQueue, &msg, portMAX_DELAY) == pdPASS) {
+				switch (msg.eventType) {
+                case LASER_START:
+                	if (sw) break;
+                    printf("Received LASER_START message\n");
+                    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_SET);
+                    // 정해진 시간 후 끄기 위해 타이머 시작
+                    xTimerStart(xLaserTimer, 0);
+                    sw = true;
+                    break;
 
-                //case EVENT_NUM02:
-                   //break;
-
-                //case EVENT_NUM03:
-                    //break;
+                case LASER_STOP:
+                    printf("Received LASER_STOP message\n");
+                    // 타이머 콜백 함수에서 보낸 메시지를 받아서 중지
+                    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET);
+                    sw = false;
+                    break;
             }
         }
     }
