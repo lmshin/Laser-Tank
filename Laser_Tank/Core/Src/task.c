@@ -89,7 +89,7 @@ void MainTask( void *pvParameters );
 static int getSigBitNumber( int usec );
 void vRemoteRxTask( void *pvParameters );
 void vRemoteParserTask( void *pvParameters );
-void GimbalControlTask( void *pvParameters );
+void vGimbalControlTask( void *pvParameters );
 void vDriveControlTask( void *pvParameters );
 void stopLaserTimerCallback( TimerHandle_t xTimer );
 void vLaserControlTask( void *pvParameters );
@@ -99,7 +99,7 @@ void vLaserControlTask( void *pvParameters );
  * 메시지큐 & 사용자 정의 블럭 정의
  * ===================
  */
-QueueHandle_t GimbalQueue, xDriveQueue, xLaserQueue;
+QueueHandle_t xGimbalControlQueue, xDriveQueue, xLaserQueue;
 extern QueueHandle_t xRemoteRxQueue, xRemoteParserQueue;
 TimerHandle_t GimbalTimer, DriveTimer, xLaserTimer;
 TaskHandle_t xHandleMain;
@@ -159,10 +159,8 @@ void USER_THREADS( void )
 
 	// 펄스 너비 정보를 전달할 큐 생성 (ISR -> RxTask)
 	xRemoteRxQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
-
 	// 디코딩된 코드를 전달할 큐 생성 (RxTask -> ParserTask)
 	xRemoteParserQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
-
 	xDriveQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
 	xGimbalControlQueue =  xQueueCreate(QUEUE_LENGTH, QUEUE_ITEM_SIZE);
 	xLaserQueue = xQueueCreate( QUEUE_LENGTH, sizeof( uint32_t ) );
@@ -175,7 +173,7 @@ void USER_THREADS( void )
     xTaskCreate( (TaskFunction_t)vRemoteRxTask, "RemoteRxTask", 256, NULL, RX_TASK_PRIO, &xRemoteRxTaskHandle );
     xTaskCreate( (TaskFunction_t)vRemoteParserTask, "RemoteParserTask", 256, NULL, PARSER_TASK_PRIO, NULL );
     xTaskCreate( (TaskFunction_t)vDriveControlTask, "DriveControlTask", 256, NULL, DRIVE_TASK_PRIO, NULL );
-    xTaskCreate(  (TaskFunction_t)GimbalControlTask, "GimbalTask", configMINIMAL_STACK_SIZE * 2, NULL, GIMBAL_TASK_PRIO, &xHandleGimbal );
+    xTaskCreate(  (TaskFunction_t)vGimbalControlTask, "GimbalTask", configMINIMAL_STACK_SIZE * 2, NULL, GIMBAL_TASK_PRIO, &xHandleGimbal );
     xTaskCreate( (TaskFunction_t)vLaserControlTask, "LaserControlTask", 256, NULL, LASER_TASK_PRIO, NULL );
 
     vTaskStartScheduler();
@@ -359,7 +357,7 @@ void vRemoteParserTask( void *pvParameters )
 }
 /*-----------------------------------------------------------*/
 
-void GimbalControlTask( void *pvParameters )
+void vGimbalControlTask( void *pvParameters )
 {
 	const char *pcTaskName = "GimbalControlTask";
 	    Gimbal_Message_t msg;
